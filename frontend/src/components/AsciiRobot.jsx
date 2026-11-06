@@ -1,25 +1,124 @@
 import React, { useEffect, useRef, useState } from 'react';
 
+// Cute mini ASCII representations of the 5 AI brands from assets/
+const AI_MASCOTS = [
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    cx: 312,
+    cy: 56,
+    phase: 0.0,
+    lines: [
+      '      .ooo.      ',
+      '     oOOOOOo     ',
+      '    oOOOOOOOo    ',
+      '   oOOOOOOOOOo   ',
+      '  oOOO.   .OOOo  ',
+      ' oOO.       .OOo ',
+      'oO.           .Oo',
+    ],
+    getColor: (r, c, dark) => {
+      if (r <= 1) return dark ? '#FB923C' : '#EA580C'; // Sunset orange peak
+      if (r === 2) {
+        if (c < 7) return dark ? '#34D399' : '#059669'; // Emerald left
+        if (c > 9) return dark ? '#F472B6' : '#DB2777'; // Coral pink right
+        return dark ? '#38BDF8' : '#0284C7';
+      }
+      return dark ? '#60A5FA' : '#2563EB'; // Electric blue arch & legs
+    },
+    labelDark: '#60A5FA',
+    labelLight: '#2563EB',
+  },
+  {
+    id: 'gpt',
+    name: 'ChatGPT',
+    cx: 638,
+    cy: 60,
+    phase: 1.3,
+    lines: [
+      '    .o###o.    ',
+      '  o###. .###o  ',
+      ' ###. .o. .### ',
+      ' ###  o o  ### ',
+      ' ###. .o. .### ',
+      '  o###. .###o  ',
+      '    .o###o.    ',
+    ],
+    getColor: (_r, _c, dark) => (dark ? '#34D399' : '#059669'),
+    labelDark: '#34D399',
+    labelLight: '#059669',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    cx: 152,
+    cy: 215,
+    phase: 2.5,
+    lines: [
+      '         _   ## ##',
+      '    .#####\\   ### ',
+      '   ########\\  ##  ',
+      '  #####o####\\##   ',
+      '  ###...########  ',
+      '   ###....####\\   ',
+      '    .#######.     ',
+    ],
+    getColor: (_r, _c, dark, ch) => {
+      if (ch === 'o') return dark ? '#FFFFFF' : '#1E3A8A';
+      if (ch === '.') return dark ? '#93C5FD' : '#60A5FA';
+      return dark ? '#60A5FA' : '#2563EB';
+    },
+    labelDark: '#60A5FA',
+    labelLight: '#2563EB',
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    cx: 186,
+    cy: 382,
+    phase: 3.8,
+    lines: [
+      '  ############  ',
+      '  ##  ####  ##  ',
+      '################',
+      '################',
+      '  ############  ',
+      '  ## ##  ## ##  ',
+      '  ## ##  ## ##  ',
+    ],
+    getColor: (_r, _c, dark) => (dark ? '#FB923C' : '#D97706'),
+    labelDark: '#FB923C',
+    labelLight: '#D97706',
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen',
+    cx: 778,
+    cy: 262,
+    phase: 5.1,
+    lines: [
+      '     /###\\     ',
+      '  ###########  ',
+      '   \\##\\ /##/   ',
+      '    \\##v##/    ',
+      '   /##/ \\##\\   ',
+      '  ###########  ',
+      '     \\###/     ',
+    ],
+    getColor: (_r, _c, dark) => (dark ? '#A78BFA' : '#7C3AED'),
+    labelDark: '#A78BFA',
+    labelLight: '#7C3AED',
+  },
+];
+
 export default function AsciiRobot() {
   const canvasRef = useRef(null);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [isDark, setIsDark] = useState(() => {
-    return document.documentElement.classList.contains('dark');
-  });
-  const [mousePos, setMousePos] = useState({ x: -100, y: -100 });
-  const [isHovered, setIsHovered] = useState(false);
 
-  // Synchronize Dark / Light mode dynamically
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'));
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class'],
-    });
-    return () => observer.disconnect();
-  }, []);
+  // Use refs for mouse tracking so mousemove NEVER triggers React re-renders
+  const mousePosRef = useRef({ x: -1000, y: -1000 });
+  const isInsideOrbitRef = useRef(false);
+  const clickWaveRef = useRef({ active: false, x: 0, y: 0, startTime: 0 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -28,38 +127,72 @@ export default function AsciiRobot() {
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = '/images/robot-clean-source.png';
+    img.src = '/images/robot-only-clean.png?v=3';
 
     let animId;
     let frame = 0;
 
+    // Full centerpiece canvas dimensions (matches Hero SVG viewBox 940x520 so the 52px circle NEVER clips!)
+    const displayW = 940;
+    const displayH = 520;
+
+    // Robot region centered inside the 940x520 orbit space
+    const robotW = 500;
+    const robotH = 380;
+    const offsetX = (displayW - robotW) / 2; // 220
+    const offsetY = (displayH - robotH) / 2 + 6; // 76
+
+    const handleWindowMouseMove = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      const mx = (e.clientX - rect.left) * (displayW / rect.width);
+      const my = (e.clientY - rect.top) * (displayH / rect.height);
+
+      // Check if cursor is within the elliptical orbit zone (rx=415, ry=208 around center 470, 260)
+      const normX = (mx - 470) / 415;
+      const normY = (my - 260) / 208;
+      const inside = normX * normX + normY * normY <= 1.0;
+
+      isInsideOrbitRef.current = inside;
+      if (inside) {
+        mousePosRef.current.x = mx;
+        mousePosRef.current.y = my;
+      } else {
+        mousePosRef.current.x = -1000;
+        mousePosRef.current.y = -1000;
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove, { passive: true });
+
     img.onload = () => {
       setIsLoaded(true);
 
-      // Grid resolution: 88 cols x 56 rows
-      const cols = 88;
-      const rows = 56;
+      const cols = 68;
+      const rows = 46;
 
       const offCanvas = document.createElement('canvas');
       offCanvas.width = cols;
       offCanvas.height = rows;
       const offCtx = offCanvas.getContext('2d');
+      offCtx.imageSmoothingEnabled = false;
       offCtx.drawImage(img, 0, 0, cols, rows);
 
       const imgData = offCtx.getImageData(0, 0, cols, rows).data;
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const displayW = 600;
-      const displayH = 400;
 
       canvas.width = displayW * dpr;
       canvas.height = displayH * dpr;
       ctx.scale(dpr, dpr);
 
-      const cellW = displayW / cols;
-      const cellH = displayH / rows;
+      const cellW = robotW / cols;
+      const cellH = robotH / rows;
+      const baseFontPx = Math.round(cellH * 1.08);
+      const CIRCLE_RADIUS = 52;
+      const CIRCLE_RADIUS_SQ = CIRCLE_RADIUS * CIRCLE_RADIUS;
 
-      // Extract ASCII points with explicit mathematical badge & ring closure
       const points = [];
 
       for (let r = 0; r < rows; r++) {
@@ -68,254 +201,335 @@ export default function AsciiRobot() {
           const red = imgData[idx];
           const green = imgData[idx + 1];
           const blue = imgData[idx + 2];
-          const lum = 0.299 * red + 0.587 * green + 0.114 * blue;
+          const alpha = imgData[idx + 3];
 
-          // 1. CHECK BADGE 1: Top-Left Code </> (cols 10 to 24, rows 5 to 19)
-          const b1_dx = Math.max(0, Math.abs(c - 17) - 3.5);
-          const b1_dy = Math.max(0, Math.abs(r - 12) - 3.5);
-          const inBadge1 = (b1_dx * b1_dx + b1_dy * b1_dy) <= 18;
-          const isBadge1Border = inBadge1 && (b1_dx * b1_dx + b1_dy * b1_dy) >= 9.5;
-          const isSlash = inBadge1 && (c + r === 29) && c >= 16 && c <= 18;
-          const isLess = inBadge1 && (
-            (c === 13 && r === 12) ||
-            (c === 14 && (r === 11 || r === 13)) ||
-            (c === 15 && (r === 10 || r === 14))
-          );
-          const isGreater = inBadge1 && (
-            (c === 21 && r === 12) ||
-            (c === 20 && (r === 11 || r === 13)) ||
-            (c === 19 && (r === 10 || r === 14))
-          );
-          const isBadge1Icon = isSlash || isLess || isGreater;
+          const isLaptopTopEdge = r === 21 && c >= 6 && c <= 16;
+          if (alpha < 50 && !isLaptopTopEdge) continue;
 
-          // 2. CHECK BADGE 2: Top-Right Gamepad (cols 64 to 78, rows 9 to 23)
-          const b2_dx = Math.max(0, Math.abs(c - 71) - 3.5);
-          const b2_dy = Math.max(0, Math.abs(r - 16) - 3.5);
-          const inBadge2 = (b2_dx * b2_dx + b2_dy * b2_dy) <= 18;
-          const isBadge2Border = inBadge2 && (b2_dx * b2_dx + b2_dy * b2_dy) >= 9.5;
-          const isGamepadBody = inBadge2 && (c >= 67 && c <= 75 && r >= 14 && r <= 18);
-          const isBadge2Icon = isGamepadBody;
+          let activeType = 'highlight';
+          let baseChar = 'o';
 
-          // 3. CHECK BADGE 3: Bottom-Right Document (cols 64 to 78, rows 31 to 45)
-          const b3_dx = Math.max(0, Math.abs(c - 71) - 3.5);
-          const b3_dy = Math.max(0, Math.abs(r - 38) - 3.5);
-          const inBadge3 = (b3_dx * b3_dx + b3_dy * b3_dy) <= 18;
-          const isBadge3Border = inBadge3 && (b3_dx * b3_dx + b3_dy * b3_dy) >= 9.5;
-          const isDocLine = inBadge3 && (
-            (r === 36 && c >= 68 && c <= 74) ||
-            (r === 38 && c >= 68 && c <= 74) ||
-            (r === 40 && c >= 68 && c <= 74)
-          );
-          const isBadge3Icon = isDocLine;
-
-          // 4. CHECK CONTINUOUS ORBIT RING (Smooth Mathematical Ellipse)
-          const c0 = 44.0;
-          const r0 = 27.0;
-          const semiA = 37.0;
-          const semiB = 19.5;
-          const norm_x = (c - c0) / semiA;
-          const norm_y = (r - r0) / semiB;
-          const ring_dist = Math.sqrt(norm_x * norm_x + norm_y * norm_y);
-          const isOrbitRing = Math.abs(ring_dist - 1.0) <= 0.042;
-
-          // Slope / tangent for mathematically continuous directional ASCII characters
-          const phi = Math.atan2(norm_y, norm_x);
-          const dx = -semiA * Math.sin(phi);
-          const dy = semiB * Math.cos(phi);
-          const slope = Math.abs(dx) < 1e-4 ? 999 : dy / dx;
-
-          let ringChar = '-';
-          if (Math.abs(slope) < 0.35) {
-            ringChar = '-';
-          } else if (Math.abs(slope) > 1.8) {
-            ringChar = c < c0 ? '(' : ')';
-          } else if (slope > 0) {
-            ringChar = '\\';
+          if (alpha >= 50 && alpha < 200 && !isLaptopTopEdge) {
+            activeType = 'shadow';
+            baseChar = '=';
           } else {
-            ringChar = '/';
-          }
-          
-          // Inside robot mask (includes head, headphones, body, and pedestal)
-          const inRobotCenter = (c >= 28 && c <= 60 && r >= 11 && r <= 47);
+            const lum = 0.299 * red + 0.587 * green + 0.114 * blue;
+            const isOrange = red > 150 && green > 60 && blue < 145 && red - blue > 35;
+            const isLeftEye = r >= 14 && r <= 17 && c >= 28 && c <= 30;
+            const isRightEye = r >= 15 && r <= 18 && c >= 39 && c <= 41;
+            const isEye = isLeftEye || isRightEye;
+            const isVisor =
+              r >= 8 &&
+              r <= 22 &&
+              c >= 25 &&
+              c <= 47 &&
+              !(r === 22 && c <= 34) &&
+              !isEye &&
+              (lum < 160 || (r >= 13 && r <= 19 && c >= 27 && c <= 43)) &&
+              !isOrange;
 
-          // 5. ROBOT FEATURES
-          const isOrangeSample = (red - blue > 32) && (red > 150) && inRobotCenter;
-          const isVisor = inRobotCenter && lum < 105 && !isOrangeSample;
-          const isEye = isVisor && (
-            (c >= 41 && c <= 43 && r >= 20 && r <= 23) ||
-            (c >= 46 && c <= 48 && r >= 20 && r <= 23)
-          );
-          const isOutline = inRobotCenter && !isVisor && !isOrangeSample && lum < 210;
-          const isRobotFill = inRobotCenter && !isVisor && !isOrangeSample && lum >= 210;
-
-          // Pedestal shadow at bottom
-          const isPedestal = (c >= 25 && c <= 63 && r >= 46 && r <= 52 && lum < 235);
-
-          // Sparkles
-          const isSparkle = (
-            (c === 51 && r === 7) || (c === 52 && r === 7) ||
-            (c === 13 && r === 24) ||
-            (c === 57 && r === 17)
-          );
-
-          // Determine if cell is active
-          let activeType = null;
-          let char = ' ';
-
-          if (isEye) {
-            activeType = 'eye';
-            char = '●';
-          } else if (isVisor) {
-            activeType = 'visor';
-            const vRamp = ['@', '%', '#', '8'];
-            char = vRamp[(r + c) % vRamp.length];
-          } else if (isBadge1Icon) {
-            activeType = 'orangeIcon';
-            char = isSlash ? '/' : isLess ? '<' : '>';
-          } else if (isBadge2Icon) {
-            activeType = 'orangeIcon';
-            char = (c === 69 && r === 16) || (c === 73 && r === 16) ? '+' : '#';
-          } else if (isBadge3Icon) {
-            activeType = 'orangeIcon';
-            char = '=';
-          } else if (isBadge1Border || isBadge2Border || isBadge3Border) {
-            activeType = 'badgeBorder';
-            char = '#';
-          } else if (inBadge1 || inBadge2 || inBadge3) {
-            activeType = 'badgeFill';
-            char = '+';
-          } else if (isOrangeSample) {
-            activeType = 'orange';
-            const oRamp = ['#', '*', '+', '=', 'O'];
-            char = oRamp[(r * 2 + c) % oRamp.length];
-          } else if (isOrbitRing && !inRobotCenter && !inBadge1 && !inBadge2 && !inBadge3) {
-            activeType = 'orbit';
-            char = ringChar;
-          } else if (isOutline) {
-            activeType = 'outline';
-            const outRamp = ['@', '#', '*', '%'];
-            char = outRamp[(r + c) % outRamp.length];
-          } else if (isRobotFill) {
-            activeType = 'robotFill';
-            const fillRamp = ['+', ':', '.', 'o', '-'];
-            char = fillRamp[(r + c) % fillRamp.length];
-          } else if (isPedestal) {
-            activeType = 'pedestal';
-            char = '=';
-          } else if (isSparkle) {
-            activeType = 'sparkle';
-            char = '✦';
+            if (isLaptopTopEdge) {
+              activeType = 'outline';
+              baseChar = '@';
+            } else if (isEye) {
+              activeType = 'eye';
+              baseChar = '●';
+            } else if (isVisor) {
+              activeType = 'visor';
+              baseChar = '#';
+            } else if (isOrange) {
+              if (r >= 24 && r <= 33 && c >= 14 && c <= 26) {
+                activeType = 'laptopLogo';
+                baseChar = '/';
+              } else {
+                activeType = 'orange';
+                const oRamp = ['8', '#', 'O', '*'];
+                baseChar = oRamp[(r + c) % oRamp.length];
+              }
+            } else if (lum < 165 || (r === 22 && c >= 6 && c <= 16)) {
+              activeType = 'outline';
+              const outRamp = ['@', '#', '@', '*'];
+              baseChar = outRamp[(r + c) % outRamp.length];
+            } else if (lum > 228) {
+              activeType = 'highlight';
+              const hiRamp = ['O', 'o', '+', '*'];
+              baseChar = hiRamp[(r + c) % hiRamp.length];
+            } else {
+              activeType = 'body';
+              const bodyRamp = ['+', ':', 'o', '.'];
+              baseChar = bodyRamp[(r + c) % bodyRamp.length];
+            }
           }
 
-          if (activeType) {
-            points.push({
-              col: c,
-              row: r,
-              x: c * cellW,
-              y: r * cellH,
-              activeType,
-              char,
-            });
+          let darkColor = '#CBD5E1';
+          let lightColor = '#C28E68';
+
+          switch (activeType) {
+            case 'eye':
+              darkColor = '#38BDF8';
+              lightColor = '#FFFBEB';
+              break;
+            case 'visor':
+              darkColor = '#475569';
+              lightColor = '#6D5444';
+              break;
+            case 'laptopLogo':
+            case 'orange':
+              darkColor = '#FF8A3D';
+              lightColor = '#EA580C';
+              break;
+            case 'shadow':
+              darkColor = 'rgba(251, 146, 60, 0.6)';
+              lightColor = 'rgba(234, 88, 12, 0.55)';
+              break;
+            case 'outline':
+              darkColor = '#64748B';
+              lightColor = '#1C1917';
+              break;
+            case 'highlight':
+              darkColor = '#F8FAFC';
+              lightColor = '#8C7E72';
+              break;
+            default:
+              darkColor = '#CBD5E1';
+              lightColor = '#C28E68';
           }
+
+          const px = offsetX + c * cellW;
+          const py = offsetY + r * cellH;
+
+          points.push({
+            x: px,
+            y: py,
+            cx: px + cellW / 2,
+            cy: py + cellH / 2,
+            activeType,
+            baseChar,
+            darkColor,
+            lightColor,
+          });
         }
       }
 
-      const render = () => {
-        frame++;
-        ctx.clearRect(0, 0, displayW, displayH);
+      // Precompute mini ASCII AI mascot points
+      const mCellW = 4.6;
+      const mCellH = 5.6;
+      const mascotGroups = AI_MASCOTS.map((m) => {
+        const mRows = m.lines.length;
+        const mCols = m.lines[0].length;
+        const startX = m.cx - (mCols * mCellW) / 2;
+        const startY = m.cy - (mRows * mCellH) / 2;
+        const cells = [];
 
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.round(cellH * 1.05)}px "Courier New", Courier, monospace`;
+        for (let r = 0; r < mRows; r++) {
+          const line = m.lines[r];
+          for (let c = 0; c < line.length; c++) {
+            const ch = line[c];
+            if (ch === ' ') continue;
+            cells.push({
+              baseX: startX + c * mCellW + mCellW / 2,
+              baseY: startY + r * mCellH + mCellH / 2,
+              char: ch,
+              darkColor: m.getColor(r, c, true, ch),
+              lightColor: m.getColor(r, c, false, ch),
+            });
+          }
+        }
 
-        const dark = document.documentElement.classList.contains('dark');
+        return {
+          ...m,
+          cells,
+          labelY: startY + mRows * mCellH + 9,
+        };
+      });
+
+      // Pre-bake static cell backgrounds for Dark & Light mode once
+      const createBgLayer = (forDark) => {
+        const bgCanvas = document.createElement('canvas');
+        bgCanvas.width = displayW * dpr;
+        bgCanvas.height = displayH * dpr;
+        const bgCtx = bgCanvas.getContext('2d');
+        bgCtx.scale(dpr, dpr);
 
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
-          let drawChar = pt.char;
-          let drawColor = '';
+          if (pt.activeType === 'visor' || pt.activeType === 'eye') {
+            bgCtx.fillStyle = forDark ? 'rgba(17, 21, 30, 0.92)' : 'rgba(52, 36, 26, 0.94)';
+            bgCtx.fillRect(pt.x - 0.4, pt.y - 0.4, cellW + 0.8, cellH + 0.8);
+          } else if (!forDark && (pt.activeType === 'highlight' || pt.activeType === 'body')) {
+            bgCtx.fillStyle =
+              pt.activeType === 'highlight'
+                ? 'rgba(255, 255, 255, 0.88)'
+                : 'rgba(254, 236, 218, 0.85)';
+            bgCtx.fillRect(pt.x - 0.3, pt.y - 0.3, cellW + 0.6, cellH + 0.6);
+          }
+        }
+        return bgCanvas;
+      };
 
-          if (dark) {
-            // DARK MODE COLOR SCHEME
-            switch (pt.activeType) {
-              case 'eye':
-                drawColor = '#4EF2B8'; // Glowing emerald eyes
-                break;
-              case 'visor':
-                drawColor = '#1F222A'; // Visor screen
-                break;
-              case 'orangeIcon':
-              case 'badgeBorder':
-              case 'orange':
-              case 'orbit':
-              case 'pedestal':
-                drawColor = '#FF9A42'; // Vibrant orange
-                break;
-              case 'badgeFill':
-                drawColor = '#7C4A28'; // Subtle peach/amber glow inside badge
-                break;
-              case 'outline':
-                drawColor = '#F1F5F9'; // Bright platinum outlines
-                break;
-              case 'robotFill':
-                drawColor = '#94A3B8'; // Solid light grey body fill
-                break;
-              case 'sparkle':
-                drawColor = '#FBBF24'; // Gold stars
-                break;
-              default:
-                drawColor = '#CBD5E1';
-            }
+      const darkBgLayer = createBgLayer(true);
+      const lightBgLayer = createBgLayer(false);
+      const shimmerChars = ['/', '\\', '{', '}', '<', '>', '*', '#'];
+
+      const render = (time) => {
+        frame++;
+        ctx.clearRect(0, 0, displayW, displayH);
+
+        const dark = document.documentElement.classList.contains('dark');
+        const hovered = isInsideOrbitRef.current;
+        const mx = mousePosRef.current.x;
+        const my = mousePosRef.current.y;
+
+        // Draw pre-baked background layer in 1 drawImage call
+        ctx.drawImage(dark ? darkBgLayer : lightBgLayer, 0, 0, displayW, displayH);
+
+        // Draw circular orange lens anywhere inside the entire orbit region
+        if (hovered && mx >= 0 && my >= 0) {
+          ctx.beginPath();
+          ctx.arc(mx, my, CIRCLE_RADIUS, 0, Math.PI * 2);
+          ctx.fillStyle = dark ? 'rgba(255, 138, 61, 0.11)' : 'rgba(249, 115, 22, 0.11)';
+          ctx.fill();
+          ctx.strokeStyle = dark ? 'rgba(255, 138, 61, 0.6)' : 'rgba(234, 88, 12, 0.55)';
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
+
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+
+        const blinkCycle = frame % 280;
+        const isBlinking = blinkCycle > 268 && blinkCycle < 278;
+
+        const clickWave = clickWaveRef.current;
+        let waveRadius = -1;
+        if (clickWave.active) {
+          if (clickWave.startTime === 0) {
+            clickWave.startTime = time;
+          }
+          const elapsed = Math.max(0, (time - clickWave.startTime) / 1000);
+          const duration = 1.65;
+          if (elapsed < duration) {
+            const waveProgress = elapsed / duration;
+            // Expand all the way across the entire 940x520 orbit & robot (up to 920px radius)
+            waveRadius = Math.max(1, waveProgress * 920);
+
+            // Draw smooth expanding ripple ring across the orbit space
+            const ringAlpha = Math.max(0, (1 - waveProgress) * 0.55);
+            ctx.beginPath();
+            ctx.arc(clickWave.x, clickWave.y, waveRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = dark
+              ? `rgba(255, 138, 61, ${ringAlpha})`
+              : `rgba(234, 88, 12, ${ringAlpha})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
           } else {
-            // LIGHT MODE COLOR SCHEME (Rich contrast & zero hollows)
-            switch (pt.activeType) {
-              case 'eye':
-                drawColor = '#FFD54F'; // Shiny warm eyes
-                break;
-              case 'visor':
-                drawColor = '#1E1610'; // Deep espresso screen
-                break;
-              case 'orangeIcon':
-              case 'badgeBorder':
-              case 'orange':
-              case 'orbit':
-              case 'pedestal':
-                drawColor = '#EA580C'; // Deep rich saturated burnt orange
-                break;
-              case 'badgeFill':
-                drawColor = '#D4A373'; // Warm peach fill: makes badges 100% closed & filled!
-                break;
-              case 'outline':
-                drawColor = '#2B1D14'; // Dark charcoal brown outlines
-                break;
-              case 'robotFill':
-                drawColor = '#8A6E59'; // Warm mocha body fill: solid 3D round volume
-                break;
-              case 'sparkle':
-                drawColor = '#D97706'; // Amber stars
-                break;
-              default:
-                drawColor = '#4A3B32';
+            clickWave.active = false;
+          }
+        }
+
+        const hoverOrangeColor = dark ? '#FF8A3D' : '#EA580C';
+        const hoverBrightOrange = dark ? '#FFB366' : '#F97316';
+
+        // 1. Render Floating Cute Mini ASCII AI Mascots around the Robot
+        ctx.font = 'bold 7.5px "Courier New", Courier, monospace';
+        for (let mIdx = 0; mIdx < mascotGroups.length; mIdx++) {
+          const mg = mascotGroups[mIdx];
+          const bobX = Math.cos(frame * 0.028 + mg.phase) * 2.5;
+          const bobY = Math.sin(frame * 0.042 + mg.phase) * 5.0;
+
+          for (let cIdx = 0; cIdx < mg.cells.length; cIdx++) {
+            const cell = mg.cells[cIdx];
+            const px = cell.baseX + bobX;
+            const py = cell.baseY + bobY;
+            let cChar = cell.char;
+            let cColor = dark ? cell.darkColor : cell.lightColor;
+
+            if (hovered) {
+              const dx = px - mx;
+              const dy = py - my;
+              const distSq = dx * dx + dy * dy;
+              if (distSq < CIRCLE_RADIUS_SQ) {
+                cColor = distSq < CIRCLE_RADIUS_SQ * 0.4 ? hoverBrightOrange : hoverOrangeColor;
+                if (((frame + cIdx) & 7) === 0) {
+                  cChar = shimmerChars[(frame + cIdx) & 7];
+                }
+              }
+            }
+
+            if (waveRadius > 0) {
+              const distWave = Math.hypot(px - clickWave.x, py - clickWave.y);
+              const diff = Math.abs(distWave - waveRadius);
+              if (diff < 34) {
+                cColor = diff < 16 ? hoverBrightOrange : hoverOrangeColor;
+                cChar = diff < 16 ? '*' : '+';
+              }
+            }
+
+            ctx.fillStyle = cColor;
+            ctx.fillText(cChar, px, py);
+          }
+
+          // Subtle mini label below each AI mascot
+          ctx.save();
+          ctx.font = 'bold 8px "Courier New", Courier, monospace';
+          ctx.globalAlpha = 0.78;
+          ctx.fillStyle = dark ? mg.labelDark : mg.labelLight;
+          ctx.fillText(mg.name, mg.cx + bobX, mg.labelY + bobY);
+          ctx.restore();
+        }
+
+        // 2. Render Main Center ASCII Robot
+        ctx.font = `bold ${baseFontPx}px "Courier New", Courier, monospace`;
+
+        let eyeDx = 0;
+        let eyeDy = 0;
+        if (hovered) {
+          eyeDx = Math.max(-1.5, Math.min(1.5, (mx - displayW * 0.5) * 0.006));
+          eyeDy = Math.max(-1.0, Math.min(1.0, (my - displayH * 0.42) * 0.006));
+        }
+
+        for (let i = 0; i < points.length; i++) {
+          const pt = points[i];
+          let drawChar = pt.baseChar;
+          let drawColor = dark ? pt.darkColor : pt.lightColor;
+          let posX = pt.cx;
+          let posY = pt.cy;
+
+          if (pt.activeType === 'eye') {
+            posX += eyeDx;
+            posY += eyeDy;
+            if (isBlinking) {
+              drawChar = '^';
             }
           }
 
-          // Interactive shimmer on mouse hover
-          if (isHovered) {
-            const dx = pt.x - mousePos.x;
-            const dy = pt.y - mousePos.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+          // Turn characters inside the circular cursor area into warm orange shades
+          if (hovered) {
+            const dx = posX - mx;
+            const dy = posY - my;
+            const distSq = dx * dx + dy * dy;
 
-            if (dist < 60) {
-              const shimmerChars = ['/', '\\', '{', '}', '<', '>', '*', '#'];
-              if ((frame + i) % 5 === 0) {
-                drawChar = shimmerChars[(frame + i) % shimmerChars.length];
+            if (distSq < CIRCLE_RADIUS_SQ) {
+              drawColor = distSq < CIRCLE_RADIUS_SQ * 0.4 ? hoverBrightOrange : hoverOrangeColor;
+              if (pt.activeType !== 'eye' && ((frame + i) & 7) === 0) {
+                drawChar = shimmerChars[(frame + i) & 7];
               }
-              drawColor = dark ? '#FFB066' : '#C2410C';
+            }
+          }
+
+          if (waveRadius > 0) {
+            const distWave = Math.hypot(posX - clickWave.x, posY - clickWave.y);
+            const diff = Math.abs(distWave - waveRadius);
+            if (diff < 34) {
+              drawColor = diff < 16 ? hoverBrightOrange : hoverOrangeColor;
+              if (pt.activeType !== 'eye') {
+                drawChar = diff < 16 ? '*' : '+';
+              }
             }
           }
 
           ctx.fillStyle = drawColor;
-          ctx.fillText(drawChar, pt.x + cellW / 2, pt.y + cellH / 2);
+          ctx.fillText(drawChar, posX, posY);
         }
 
         animId = requestAnimationFrame(render);
@@ -325,39 +539,38 @@ export default function AsciiRobot() {
     };
 
     return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
       cancelAnimationFrame(animId);
     };
-  }, [isHovered, mousePos, isDark]);
+  }, []);
 
-  const handleMouseMove = (e) => {
+  const handleClick = (e) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !isInsideOrbitRef.current) return;
     const rect = canvas.getBoundingClientRect();
-    setMousePos({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    });
+    clickWaveRef.current = {
+      active: true,
+      x: (e.clientX - rect.left) * (940 / rect.width),
+      y: (e.clientY - rect.top) * (520 / rect.height),
+      startTime: 0,
+    };
   };
 
   return (
     <div
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onMouseMove={handleMouseMove}
-      className="relative flex flex-col items-center select-none"
+      onClick={handleClick}
+      className="relative w-full h-full flex items-center justify-center select-none cursor-crosshair"
     >
-      <div className="relative w-full max-w-[560px] aspect-[560/400] flex items-center justify-center">
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full object-contain cursor-crosshair transform transition-transform duration-300 hover:scale-[1.02]"
-        />
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full object-contain"
+      />
 
-        {!isLoaded && (
-          <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-orange-500 animate-pulse">
-            Đang kết xuất ASCII Robot...
-          </div>
-        )}
-      </div>
+      {!isLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-orange-500 animate-pulse">
+          Đang kết xuất ASCII Robot...
+        </div>
+      )}
     </div>
   );
 }

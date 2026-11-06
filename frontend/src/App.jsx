@@ -14,9 +14,7 @@ import { fetchPosts, fetchGames, fetchStats } from './services/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
-  const [isDark, setIsDark] = useState(() => {
-    return localStorage.getItem('tote_theme') === 'dark';
-  });
+  const isDark = true;
 
   // Data states
   const [posts, setPosts] = useState([]);
@@ -31,16 +29,11 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  // Synchronize Dark Theme class
+  // Synchronize fixed Dark Theme class
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('tote_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('tote_theme', 'light');
-    }
-  }, [isDark]);
+    document.documentElement.classList.add('dark');
+    localStorage.setItem('tote_theme', 'dark');
+  }, []);
 
   // Load Initial Data
   const loadData = async () => {
@@ -140,7 +133,6 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         isDark={isDark}
-        setIsDark={setIsDark}
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenCreate={() => setIsCreateOpen(true)}
       />

@@ -68,19 +68,6 @@ export default function Navbar({
             <Search className="w-5 h-5 stroke-[2.2]" />
           </button>
 
-          {/* Dark / Light Toggle */}
-          <button
-            onClick={() => setIsDark(!isDark)}
-            aria-label="Chuyển chế độ sáng/tối"
-            className="p-2.5 rounded-2xl text-zinc-600 dark:text-zinc-300 hover:bg-orange-50 dark:hover:bg-zinc-800 transition-colors border border-transparent hover:border-orange-100 dark:hover:border-zinc-700"
-          >
-            {isDark ? (
-              <Sun className="w-5 h-5 text-amber-400 stroke-[2.2]" />
-            ) : (
-              <Moon className="w-5 h-5 stroke-[2.2]" />
-            )}
-          </button>
-
           {/* Post / Game Creator Button */}
           <button
             onClick={onOpenCreate}
